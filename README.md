@@ -7,7 +7,7 @@ The project uses only the Python standard library:
 - `check-net service` fires a small batch of HTTP requests every second.
 - `check-net once` runs one batch and exits.
 - Each request result is written to SQLite with timestamp, target, status, latency, and error details.
-- `check-net dashboard` serves a local date-filterable visualization from that database.
+- `check-net dashboard` serves a local date-time range-filterable visualization from that database.
 
 ## Requirements
 
@@ -64,7 +64,7 @@ Then open:
 http://127.0.0.1:8765
 ```
 
-The dashboard refreshes every five seconds and has a date picker for filtering uptime and request details by day.
+The dashboard refreshes every five seconds and has date-time range inputs for filtering uptime and request details.
 
 ## Query the database directly
 

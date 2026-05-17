@@ -191,8 +191,10 @@ HTML = """<!doctype html>
         <p class="subtitle">SQLite-backed connectivity checks, grouped by minute.</p>
       </div>
       <form id="filters">
-        <label for="day">Date</label>
-        <input id="day" name="date" type="date">
+        <label for="start">From</label>
+        <input id="start" name="start" type="datetime-local">
+        <label for="end">To</label>
+        <input id="end" name="end" type="datetime-local">
         <button type="submit">Apply</button>
       </form>
     </header>
@@ -219,12 +221,29 @@ HTML = """<!doctype html>
   </main>
 
   <script>
-    const input = document.querySelector("#day");
+    const startInput = document.querySelector("#start");
+    const endInput = document.querySelector("#end");
     const form = document.querySelector("#filters");
     const canvas = document.querySelector("#chart");
     const ctx = canvas.getContext("2d");
 
-    input.valueAsDate = new Date();
+    function toDateTimeLocal(value) {
+      const offsetMs = value.getTimezoneOffset() * 60 * 1000;
+      return new Date(value.getTime() - offsetMs).toISOString().slice(0, 16);
+    }
+
+    function startOfToday() {
+      const now = new Date();
+      return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    }
+
+    function endOfToday() {
+      const start = startOfToday();
+      return new Date(start.getTime() + 24 * 60 * 60 * 1000);
+    }
+
+    startInput.value = toDateTimeLocal(startOfToday());
+    endInput.value = toDateTimeLocal(endOfToday());
 
     form.addEventListener("submit", event => {
       event.preventDefault();
@@ -272,7 +291,7 @@ HTML = """<!doctype html>
       if (!points.length) {
         ctx.fillStyle = "#667067";
         ctx.font = "16px system-ui";
-        ctx.fillText("No checks for this date yet.", pad.left, height / 2);
+        ctx.fillText("No checks for this range yet.", pad.left, height / 2);
         return;
       }
 
@@ -312,8 +331,15 @@ HTML = """<!doctype html>
     }
 
     async function load() {
-      const response = await fetch(`/api/summary?date=${encodeURIComponent(input.value)}`);
+      const params = new URLSearchParams();
+      if (startInput.value) params.set("start", new Date(startInput.value).toISOString());
+      if (endInput.value) params.set("end", new Date(endInput.value).toISOString());
+
+      const response = await fetch(`/api/summary?${params.toString()}`);
       const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to load summary.");
+      }
 
       document.querySelector("#uptime").textContent = data.total_checks ? pct(data.uptime) : "-";
       document.querySelector("#checks").textContent = data.total_checks.toLocaleString();
@@ -343,7 +369,23 @@ HTML = """<!doctype html>
 """
 
 
-def day_bounds(day: str | None) -> tuple[str, str]:
+def normalize_iso(value: str) -> str:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC).isoformat(timespec="milliseconds")
+
+
+def range_bounds(start_value: str | None, end_value: str | None, day: str | None) -> tuple[str, str]:
+    if start_value and end_value:
+        start = normalize_iso(start_value)
+        end = normalize_iso(end_value)
+        if start >= end:
+            raise ValueError("Range start must be before range end.")
+        return start, end
+    if start_value or end_value:
+        raise ValueError("Both range endpoints are required.")
+
     if day:
         selected = date.fromisoformat(day)
     else:
@@ -354,8 +396,13 @@ def day_bounds(day: str | None) -> tuple[str, str]:
     return start.isoformat(timespec="milliseconds"), end.isoformat(timespec="milliseconds")
 
 
-def fetch_summary(db_path: Path, day: str | None) -> dict[str, object]:
-    start, end = day_bounds(day)
+def fetch_summary(
+    db_path: Path,
+    start_value: str | None = None,
+    end_value: str | None = None,
+    day: str | None = None,
+) -> dict[str, object]:
+    start, end = range_bounds(start_value, end_value, day)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
@@ -445,11 +492,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/summary":
             query = parse_qs(parsed.query)
+            start = query.get("start", [None])[0] or None
+            end = query.get("end", [None])[0] or None
             day = query.get("date", [None])[0] or None
             try:
-                payload = fetch_summary(Path(self.db_path), day)
+                payload = fetch_summary(Path(self.db_path), start, end, day)
             except ValueError:
-                self.send_json({"error": "Invalid date. Use YYYY-MM-DD."}, HTTPStatus.BAD_REQUEST)
+                self.send_json(
+                    {"error": "Invalid range. Use ISO timestamps, or date=YYYY-MM-DD."},
+                    HTTPStatus.BAD_REQUEST,
+                )
                 return
             self.send_json(payload)
             return
