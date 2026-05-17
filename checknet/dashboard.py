@@ -238,6 +238,14 @@ HTML = """<!doctype html>
     const form = document.querySelector("#filters");
     const canvas = document.querySelector("#chart");
     const ctx = canvas.getContext("2d");
+    let chartState = {
+      points: [],
+      rangeStart: null,
+      rangeEnd: null,
+      hoveredIndex: null,
+      positions: [],
+      plot: null,
+    };
 
     function pad(value) {
       return String(value).padStart(2, "0");
@@ -294,6 +302,10 @@ HTML = """<!doctype html>
       return `${(value * 100).toFixed(2)}%`;
     }
 
+    function failureRate(point) {
+      return 1 - point.uptime;
+    }
+
     function localTime(value) {
       return new Date(value).toLocaleString([], {
         year: "numeric",
@@ -314,7 +326,38 @@ HTML = """<!doctype html>
       });
     }
 
-    function drawChart(points, rangeStart, rangeEnd) {
+    function drawTooltip(point, x, y, width, height) {
+      const timestamp = localTime(point.minute);
+      const rate = pct(failureRate(point));
+      const title = timestamp;
+      const detail = `Failure rate ${rate}`;
+      ctx.save();
+      ctx.font = "12px system-ui";
+      const textW = Math.max(ctx.measureText(title).width, ctx.measureText(detail).width);
+      const boxW = Math.ceil(textW + 24);
+      const boxH = 54;
+      const boxX = Math.min(Math.max(8, x + 12), width - boxW - 8);
+      const boxY = Math.max(8, y - boxH - 12);
+
+      ctx.fillStyle = "rgba(32, 36, 31, 0.94)";
+      ctx.beginPath();
+      if (ctx.roundRect) {
+        ctx.roundRect(boxX, boxY, boxW, boxH, 6);
+      } else {
+        ctx.rect(boxX, boxY, boxW, boxH);
+      }
+      ctx.fill();
+
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "700 12px system-ui";
+      ctx.fillText(title, boxX + 12, boxY + 21);
+      ctx.fillStyle = "#d9ded7";
+      ctx.font = "12px system-ui";
+      ctx.fillText(detail, boxX + 12, boxY + 40);
+      ctx.restore();
+    }
+
+    function drawChart(points, rangeStart, rangeEnd, hoveredIndex = null) {
       const ratio = window.devicePixelRatio || 1;
       const rect = canvas.getBoundingClientRect();
       canvas.width = Math.max(720, Math.floor(rect.width * ratio));
@@ -352,6 +395,18 @@ HTML = """<!doctype html>
         return pad.left + plotW * Math.min(1, Math.max(0, ratio));
       };
       const yFor = uptime => pad.top + plotH * (1 - uptime);
+      const positions = points.map(point => ({
+        x: xFor(point.minute),
+        y: yFor(point.uptime),
+      }));
+      chartState = {
+        points,
+        rangeStart,
+        rangeEnd,
+        hoveredIndex,
+        positions,
+        plot: { left: pad.left, right: width - pad.right, top: pad.top, bottom: height - pad.bottom },
+      };
 
       ctx.fillStyle = "#667067";
       ctx.font = "12px system-ui";
@@ -369,8 +424,7 @@ HTML = """<!doctype html>
 
       ctx.beginPath();
       points.forEach((point, index) => {
-        const x = xFor(point.minute);
-        const y = yFor(point.uptime);
+        const { x, y } = positions[index];
         if (index === 0) ctx.moveTo(x, y);
         else ctx.lineTo(x, y);
       });
@@ -379,14 +433,70 @@ HTML = """<!doctype html>
       ctx.stroke();
 
       ctx.fillStyle = "#2459a6";
-      points.forEach(point => {
-        const x = xFor(point.minute);
-        const y = yFor(point.uptime);
+      positions.forEach(({ x, y }) => {
         ctx.beginPath();
         ctx.arc(x, y, 2.5, 0, Math.PI * 2);
         ctx.fill();
       });
+
+      if (hoveredIndex != null && positions[hoveredIndex]) {
+        const { x, y } = positions[hoveredIndex];
+        ctx.strokeStyle = "#c2412d";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(x, pad.top);
+        ctx.lineTo(x, height - pad.bottom);
+        ctx.stroke();
+
+        ctx.fillStyle = "#ffffff";
+        ctx.strokeStyle = "#2459a6";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(x, y, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        drawTooltip(points[hoveredIndex], x, y, width, height);
+      }
     }
+
+    function nearestPointIndex(event) {
+      if (!chartState.points.length || !chartState.plot) return null;
+
+      const rect = canvas.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      const plot = chartState.plot;
+      if (x < plot.left || x > plot.right || y < plot.top || y > plot.bottom) return null;
+
+      let nearest = null;
+      let nearestDistance = Infinity;
+      chartState.positions.forEach((point, index) => {
+        const distance = Math.hypot(point.x - x, point.y - y);
+        if (distance < nearestDistance) {
+          nearest = index;
+          nearestDistance = distance;
+        }
+      });
+      return nearestDistance <= 18 ? nearest : null;
+    }
+
+    function handleChartHover(event) {
+      const hoveredIndex = nearestPointIndex(event);
+      if (hoveredIndex === chartState.hoveredIndex) return;
+      canvas.style.cursor = hoveredIndex == null ? "default" : "crosshair";
+      drawChart(chartState.points, chartState.rangeStart, chartState.rangeEnd, hoveredIndex);
+    }
+
+    function clearChartHover() {
+      if (chartState.hoveredIndex == null) return;
+      canvas.style.cursor = "default";
+      drawChart(chartState.points, chartState.rangeStart, chartState.rangeEnd);
+    }
+
+    canvas.addEventListener("mousemove", handleChartHover);
+    canvas.addEventListener("pointermove", handleChartHover);
+    canvas.addEventListener("mouseleave", clearChartHover);
+    canvas.addEventListener("pointerleave", clearChartHover);
 
     async function load() {
       startInput.setCustomValidity("");
@@ -426,7 +536,7 @@ HTML = """<!doctype html>
       document.querySelector("#failures").textContent = data.failed_checks.toLocaleString();
       document.querySelector("#latency").textContent = data.avg_latency_ms == null ? "-" : `${Math.round(data.avg_latency_ms)} ms`;
 
-      drawChart(data.series, data.date_start, data.date_end);
+      drawChart(data.series, data.date_start, data.date_end, chartState.hoveredIndex);
 
       const rows = data.recent.map(row => `
         <tr>
