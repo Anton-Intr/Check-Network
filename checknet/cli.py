@@ -4,7 +4,7 @@ import argparse
 
 from .dashboard import run_dashboard
 from .probe import ConnectivityMonitor, add_probe_args, parse_targets
-from .storage import init_db
+from .storage import DEFAULT_DB_PATH, init_db
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -21,12 +21,12 @@ def build_parser() -> argparse.ArgumentParser:
     add_probe_args(once)
 
     dashboard = subparsers.add_parser("dashboard", help="Run the local visualization dashboard.")
-    dashboard.add_argument("--db", default="checknet.sqlite3", help="SQLite database path.")
+    dashboard.add_argument("--db", default=str(DEFAULT_DB_PATH), help="SQLite database path.")
     dashboard.add_argument("--host", default="127.0.0.1", help="Bind host.")
     dashboard.add_argument("--port", type=int, default=8765, help="Bind port.")
 
     init = subparsers.add_parser("init-db", help="Create the SQLite database schema.")
-    init.add_argument("--db", default="checknet.sqlite3", help="SQLite database path.")
+    init.add_argument("--db", default=str(DEFAULT_DB_PATH), help="SQLite database path.")
 
     return parser
 

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Iterator
 
 
-DEFAULT_DB_PATH = Path("checknet.sqlite3")
+DEFAULT_DB_PATH = Path("data/checknet.sqlite3")
 
 
 SCHEMA = """
