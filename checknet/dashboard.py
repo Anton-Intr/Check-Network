@@ -192,9 +192,9 @@ HTML = """<!doctype html>
       </div>
       <form id="filters">
         <label for="start">From</label>
-        <input id="start" name="start" type="datetime-local">
+        <input id="start" name="start" type="text" inputmode="numeric" placeholder="YYYY-MM-DD HH:mm">
         <label for="end">To</label>
-        <input id="end" name="end" type="datetime-local">
+        <input id="end" name="end" type="text" inputmode="numeric" placeholder="YYYY-MM-DD HH:mm">
         <button type="submit">Apply</button>
       </form>
     </header>
@@ -227,9 +227,35 @@ HTML = """<!doctype html>
     const canvas = document.querySelector("#chart");
     const ctx = canvas.getContext("2d");
 
-    function toDateTimeLocal(value) {
-      const offsetMs = value.getTimezoneOffset() * 60 * 1000;
-      return new Date(value.getTime() - offsetMs).toISOString().slice(0, 16);
+    function pad(value) {
+      return String(value).padStart(2, "0");
+    }
+
+    function formatLocalDateTime(value) {
+      return [
+        value.getFullYear(),
+        pad(value.getMonth() + 1),
+        pad(value.getDate()),
+      ].join("-") + ` ${pad(value.getHours())}:${pad(value.getMinutes())}`;
+    }
+
+    function parseLocalDateTime(value) {
+      const match = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})$/);
+      if (!match) return null;
+
+      const [, year, month, day, hour, minute] = match.map(Number);
+      const parsed = new Date(year, month - 1, day, hour, minute, 0, 0);
+      if (
+        parsed.getFullYear() !== year ||
+        parsed.getMonth() !== month - 1 ||
+        parsed.getDate() !== day ||
+        parsed.getHours() !== hour ||
+        parsed.getMinutes() !== minute
+      ) {
+        return null;
+      }
+
+      return parsed;
     }
 
     function startOfToday() {
@@ -242,8 +268,8 @@ HTML = """<!doctype html>
       return new Date(start.getTime() + 24 * 60 * 60 * 1000);
     }
 
-    startInput.value = toDateTimeLocal(startOfToday());
-    endInput.value = toDateTimeLocal(endOfToday());
+    startInput.value = formatLocalDateTime(startOfToday());
+    endInput.value = formatLocalDateTime(endOfToday());
 
     form.addEventListener("submit", event => {
       event.preventDefault();
@@ -257,10 +283,26 @@ HTML = """<!doctype html>
     }
 
     function localTime(value) {
-      return new Date(value).toLocaleString();
+      return new Date(value).toLocaleString([], {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      });
     }
 
-    function drawChart(points) {
+    function localTimeShort(value) {
+      return new Date(value).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      });
+    }
+
+    function drawChart(points, rangeStart, rangeEnd) {
       const ratio = window.devicePixelRatio || 1;
       const rect = canvas.getBoundingClientRect();
       canvas.width = Math.max(720, Math.floor(rect.width * ratio));
@@ -288,6 +330,24 @@ HTML = """<!doctype html>
         ctx.fillText(`${value}%`, 8, y + 4);
       }
 
+      const plotW = width - pad.left - pad.right;
+      const plotH = height - pad.top - pad.bottom;
+      const startMs = new Date(rangeStart).getTime();
+      const endMs = new Date(rangeEnd).getTime();
+      const rangeMs = Math.max(1, endMs - startMs);
+      const xFor = value => {
+        const ratio = (new Date(value).getTime() - startMs) / rangeMs;
+        return pad.left + plotW * Math.min(1, Math.max(0, ratio));
+      };
+      const yFor = uptime => pad.top + plotH * (1 - uptime);
+
+      ctx.fillStyle = "#667067";
+      ctx.font = "12px system-ui";
+      ctx.fillText(localTimeShort(rangeStart), pad.left, height - 10);
+      ctx.textAlign = "right";
+      ctx.fillText(localTimeShort(rangeEnd), width - pad.right, height - 10);
+      ctx.textAlign = "left";
+
       if (!points.length) {
         ctx.fillStyle = "#667067";
         ctx.font = "16px system-ui";
@@ -295,14 +355,9 @@ HTML = """<!doctype html>
         return;
       }
 
-      const plotW = width - pad.left - pad.right;
-      const plotH = height - pad.top - pad.bottom;
-      const xFor = index => pad.left + (points.length === 1 ? 0 : plotW * index / (points.length - 1));
-      const yFor = uptime => pad.top + plotH * (1 - uptime);
-
       ctx.beginPath();
       points.forEach((point, index) => {
-        const x = xFor(index);
+        const x = xFor(point.minute);
         const y = yFor(point.uptime);
         if (index === 0) ctx.moveTo(x, y);
         else ctx.lineTo(x, y);
@@ -312,28 +367,40 @@ HTML = """<!doctype html>
       ctx.stroke();
 
       ctx.fillStyle = "#2459a6";
-      points.forEach((point, index) => {
-        const x = xFor(index);
+      points.forEach(point => {
+        const x = xFor(point.minute);
         const y = yFor(point.uptime);
         ctx.beginPath();
         ctx.arc(x, y, 2.5, 0, Math.PI * 2);
         ctx.fill();
       });
-
-      ctx.fillStyle = "#667067";
-      ctx.font = "12px system-ui";
-      const first = new Date(points[0].minute).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-      const last = new Date(points[points.length - 1].minute).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-      ctx.fillText(first, pad.left, height - 10);
-      ctx.textAlign = "right";
-      ctx.fillText(last, width - pad.right, height - 10);
-      ctx.textAlign = "left";
     }
 
     async function load() {
+      startInput.setCustomValidity("");
+      endInput.setCustomValidity("");
+
+      const start = parseLocalDateTime(startInput.value);
+      const end = parseLocalDateTime(endInput.value);
+      if (!start) {
+        startInput.setCustomValidity("Use YYYY-MM-DD HH:mm.");
+        startInput.reportValidity();
+        return;
+      }
+      if (!end) {
+        endInput.setCustomValidity("Use YYYY-MM-DD HH:mm.");
+        endInput.reportValidity();
+        return;
+      }
+      if (start >= end) {
+        endInput.setCustomValidity("End must be after start.");
+        endInput.reportValidity();
+        return;
+      }
+
       const params = new URLSearchParams();
-      if (startInput.value) params.set("start", new Date(startInput.value).toISOString());
-      if (endInput.value) params.set("end", new Date(endInput.value).toISOString());
+      params.set("start", start.toISOString());
+      params.set("end", end.toISOString());
 
       const response = await fetch(`/api/summary?${params.toString()}`);
       const data = await response.json();
@@ -346,7 +413,7 @@ HTML = """<!doctype html>
       document.querySelector("#failures").textContent = data.failed_checks.toLocaleString();
       document.querySelector("#latency").textContent = data.avg_latency_ms == null ? "-" : `${Math.round(data.avg_latency_ms)} ms`;
 
-      drawChart(data.series);
+      drawChart(data.series, data.date_start, data.date_end);
 
       const rows = data.recent.map(row => `
         <tr>
