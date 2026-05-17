@@ -156,6 +156,16 @@ HTML = """<!doctype html>
       min-width: 760px;
     }
 
+    caption {
+      padding: 12px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 750;
+      letter-spacing: .04em;
+      text-align: left;
+      text-transform: uppercase;
+    }
+
     th, td {
       padding: 10px 12px;
       border-bottom: 1px solid var(--line);
@@ -212,6 +222,7 @@ HTML = """<!doctype html>
 
     <section class="table-wrap">
       <table>
+        <caption>Last 10 requests in range</caption>
         <thead>
           <tr><th>Time</th><th>Target</th><th>Status</th><th>HTTP</th><th>Latency</th><th>Error</th></tr>
         </thead>
@@ -507,7 +518,7 @@ def fetch_summary(
             FROM requests
             WHERE checked_at >= ? AND checked_at < ?
             ORDER BY checked_at DESC
-            LIMIT 200
+            LIMIT 10
             """,
             (start, end),
         ).fetchall()
