@@ -14,3 +14,6 @@ check-net = "checknet.cli:main"
 
 [tool.setuptools]
 packages = ["checknet"]
+
+[tool.setuptools.package-data]
+checknet = ["dashboard.html"]
