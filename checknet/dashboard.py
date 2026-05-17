@@ -104,7 +104,7 @@ HTML = """<!doctype html>
 
     .stats {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(5, minmax(0, 1fr));
       gap: 12px;
       margin-bottom: 12px;
     }
@@ -210,7 +210,8 @@ HTML = """<!doctype html>
     </header>
 
     <section class="stats">
-      <div class="stat"><div class="label">Uptime</div><div class="value" id="uptime">-</div></div>
+      <div class="stat"><div class="label">Period uptime</div><div class="value" id="period-uptime">-</div></div>
+      <div class="stat"><div class="label">All-time uptime</div><div class="value" id="all-time-uptime">-</div></div>
       <div class="stat"><div class="label">Checks</div><div class="value" id="checks">-</div></div>
       <div class="stat"><div class="label">Failures</div><div class="value" id="failures">-</div></div>
       <div class="stat"><div class="label">Avg latency</div><div class="value" id="latency">-</div></div>
@@ -419,7 +420,8 @@ HTML = """<!doctype html>
         throw new Error(data.error || "Failed to load summary.");
       }
 
-      document.querySelector("#uptime").textContent = data.total_checks ? pct(data.uptime) : "-";
+      document.querySelector("#period-uptime").textContent = data.total_checks ? pct(data.uptime) : "-";
+      document.querySelector("#all-time-uptime").textContent = data.all_time.total_checks ? pct(data.all_time.uptime) : "-";
       document.querySelector("#checks").textContent = data.total_checks.toLocaleString();
       document.querySelector("#failures").textContent = data.failed_checks.toLocaleString();
       document.querySelector("#latency").textContent = data.avg_latency_ms == null ? "-" : `${Math.round(data.avg_latency_ms)} ms`;
@@ -497,6 +499,16 @@ def fetch_summary(
             (start, end),
         ).fetchone()
 
+        all_time_totals = conn.execute(
+            """
+            SELECT
+                COUNT(*) AS total_checks,
+                COALESCE(SUM(ok), 0) AS ok_checks,
+                COALESCE(SUM(CASE WHEN ok = 0 THEN 1 ELSE 0 END), 0) AS failed_checks
+            FROM requests
+            """
+        ).fetchone()
+
         series = conn.execute(
             """
             SELECT
@@ -527,6 +539,8 @@ def fetch_summary(
 
     total_checks = int(totals["total_checks"])
     ok_checks = int(totals["ok_checks"])
+    all_time_total_checks = int(all_time_totals["total_checks"])
+    all_time_ok_checks = int(all_time_totals["ok_checks"])
     return {
         "date_start": start,
         "date_end": end,
@@ -534,6 +548,12 @@ def fetch_summary(
         "ok_checks": ok_checks,
         "failed_checks": int(totals["failed_checks"]),
         "uptime": ok_checks / total_checks if total_checks else 0,
+        "all_time": {
+            "total_checks": all_time_total_checks,
+            "ok_checks": all_time_ok_checks,
+            "failed_checks": int(all_time_totals["failed_checks"]),
+            "uptime": all_time_ok_checks / all_time_total_checks if all_time_total_checks else 0,
+        },
         "avg_latency_ms": totals["avg_latency_ms"],
         "series": [
             {
