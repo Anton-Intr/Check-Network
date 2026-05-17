@@ -127,6 +127,26 @@
       margin-bottom: 12px;
     }
 
+    .chart-tools {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+
+    .chart-selection {
+      min-height: 18px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .secondary-button {
+      background: #fff;
+      color: var(--accent);
+      border-color: var(--accent);
+    }
+
     canvas {
       display: block;
       width: 100%;
@@ -205,6 +225,10 @@
     </section>
 
     <section class="chart-wrap">
+      <div class="chart-tools">
+        <div id="chart-selection" class="chart-selection" aria-live="polite"></div>
+        <button id="reset-selection" class="secondary-button" type="button" disabled>Reset selection</button>
+      </div>
       <canvas id="chart" width="1100" height="360" aria-label="Uptime chart"></canvas>
     </section>
 
@@ -224,7 +248,16 @@
     const endInput = document.querySelector("#end");
     const form = document.querySelector("#filters");
     const canvas = document.querySelector("#chart");
+    const selectionStatus = document.querySelector("#chart-selection");
+    const resetSelectionButton = document.querySelector("#reset-selection");
     const ctx = canvas.getContext("2d");
+    let graphSelection = {
+      anchor: null,
+      start: null,
+      end: null,
+      resetStart: null,
+      resetEnd: null,
+    };
     let chartState = {
       points: [],
       rangeStart: null,
@@ -280,10 +313,11 @@
 
     form.addEventListener("submit", event => {
       event.preventDefault();
+      clearGraphSelection();
       load();
     });
 
-    window.addEventListener("resize", () => load());
+    window.addEventListener("resize", () => load({ preserveSelection: true }));
 
     function pct(value) {
       return `${(value * 100).toFixed(2)}%`;
@@ -311,6 +345,60 @@
         minute: "2-digit",
         hour12: false,
       });
+    }
+
+    function localDateTimeMinute(value) {
+      return new Date(value).toLocaleString([], {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      });
+    }
+
+    function selectionText() {
+      if (graphSelection.start && graphSelection.end) {
+        return `Selected ${localDateTimeMinute(graphSelection.start)} to ${localDateTimeMinute(graphSelection.end)}`;
+      }
+      if (graphSelection.anchor) {
+        return `Selection starts at ${localDateTimeMinute(graphSelection.anchor)}`;
+      }
+      return "";
+    }
+
+    function updateSelectionControls() {
+      selectionStatus.textContent = selectionText();
+      resetSelectionButton.disabled = !graphSelection.anchor && !graphSelection.start && !graphSelection.end;
+    }
+
+    function clearGraphSelection() {
+      graphSelection = {
+        anchor: null,
+        start: null,
+        end: null,
+        resetStart: null,
+        resetEnd: null,
+      };
+      updateSelectionControls();
+    }
+
+    function dateAtChartX(x) {
+      const plot = chartState.plot;
+      if (!plot || !chartState.rangeStart || !chartState.rangeEnd) return null;
+
+      const clampedX = Math.min(plot.right, Math.max(plot.left, x));
+      const ratio = (clampedX - plot.left) / Math.max(1, plot.right - plot.left);
+      const startMs = new Date(chartState.rangeStart).getTime();
+      const endMs = new Date(chartState.rangeEnd).getTime();
+      return new Date(startMs + (endMs - startMs) * ratio);
+    }
+
+    function floorToMinute(value) {
+      const result = new Date(value);
+      result.setSeconds(0, 0);
+      return result;
     }
 
     function drawTooltip(point, x, y, width, height) {
@@ -386,6 +474,11 @@
         x: xFor(point.minute),
         y: yFor(point.uptime),
       }));
+      const selection = {
+        anchor: graphSelection.anchor,
+        start: graphSelection.start,
+        end: graphSelection.end,
+      };
       chartState = {
         points,
         rangeStart,
@@ -394,6 +487,31 @@
         positions,
         plot: { left: pad.left, right: width - pad.right, top: pad.top, bottom: height - pad.bottom },
       };
+
+      if (selection.start && selection.end) {
+        const selectionX1 = xFor(selection.start);
+        const selectionX2 = xFor(selection.end);
+        const left = Math.min(selectionX1, selectionX2);
+        const right = Math.max(selectionX1, selectionX2);
+        ctx.fillStyle = "rgba(36, 89, 166, 0.14)";
+        ctx.fillRect(left, pad.top, Math.max(2, right - left), plotH);
+        ctx.strokeStyle = "rgba(36, 89, 166, 0.55)";
+        ctx.lineWidth = 1;
+        [left, right].forEach(x => {
+          ctx.beginPath();
+          ctx.moveTo(x, pad.top);
+          ctx.lineTo(x, height - pad.bottom);
+          ctx.stroke();
+        });
+      } else if (selection.anchor) {
+        const anchorX = xFor(selection.anchor);
+        ctx.strokeStyle = "rgba(36, 89, 166, 0.75)";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(anchorX, pad.top);
+        ctx.lineTo(anchorX, height - pad.bottom);
+        ctx.stroke();
+      }
 
       ctx.fillStyle = "#667067";
       ctx.font = "12px system-ui";
@@ -467,10 +585,20 @@
       return nearestDistance <= 18 ? nearest : null;
     }
 
+    function isInsidePlot(event) {
+      if (!chartState.plot) return false;
+
+      const rect = canvas.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      const plot = chartState.plot;
+      return x >= plot.left && x <= plot.right && y >= plot.top && y <= plot.bottom;
+    }
+
     function handleChartHover(event) {
       const hoveredIndex = nearestPointIndex(event);
       if (hoveredIndex === chartState.hoveredIndex) return;
-      canvas.style.cursor = hoveredIndex == null ? "default" : "crosshair";
+      canvas.style.cursor = hoveredIndex == null && !isInsidePlot(event) ? "default" : "crosshair";
       drawChart(chartState.points, chartState.rangeStart, chartState.rangeEnd, hoveredIndex);
     }
 
@@ -480,12 +608,66 @@
       drawChart(chartState.points, chartState.rangeStart, chartState.rangeEnd);
     }
 
+    function handleChartClick(event) {
+      if (!isInsidePlot(event)) return;
+
+      const rect = canvas.getBoundingClientRect();
+      const clickedDate = dateAtChartX(event.clientX - rect.left);
+      if (!clickedDate) return;
+      const clickedAt = floorToMinute(clickedDate);
+
+      if (!graphSelection.anchor) {
+        graphSelection = {
+          anchor: clickedAt,
+          start: null,
+          end: null,
+          resetStart: startInput.value,
+          resetEnd: endInput.value,
+        };
+        updateSelectionControls();
+        drawChart(chartState.points, chartState.rangeStart, chartState.rangeEnd, chartState.hoveredIndex);
+        return;
+      }
+
+      const anchorMs = graphSelection.anchor.getTime();
+      const clickedMs = clickedAt.getTime();
+      if (anchorMs === clickedMs) return;
+
+      const start = new Date(Math.min(anchorMs, clickedMs));
+      const end = new Date(Math.max(anchorMs, clickedMs));
+      graphSelection = {
+        ...graphSelection,
+        anchor: null,
+        start,
+        end,
+      };
+      startInput.value = formatLocalDateTime(start);
+      endInput.value = formatLocalDateTime(end);
+      updateSelectionControls();
+      load({ preserveSelection: true });
+    }
+
+    function resetGraphSelection() {
+      const resetStart = graphSelection.resetStart;
+      const resetEnd = graphSelection.resetEnd;
+      clearGraphSelection();
+      if (resetStart && resetEnd) {
+        startInput.value = resetStart;
+        endInput.value = resetEnd;
+        load();
+        return;
+      }
+      drawChart(chartState.points, chartState.rangeStart, chartState.rangeEnd, chartState.hoveredIndex);
+    }
+
     canvas.addEventListener("mousemove", handleChartHover);
     canvas.addEventListener("pointermove", handleChartHover);
     canvas.addEventListener("mouseleave", clearChartHover);
     canvas.addEventListener("pointerleave", clearChartHover);
+    canvas.addEventListener("click", handleChartClick);
+    resetSelectionButton.addEventListener("click", resetGraphSelection);
 
-    async function load() {
+    async function load(options = {}) {
       startInput.setCustomValidity("");
       endInput.setCustomValidity("");
 
@@ -523,6 +705,9 @@
       document.querySelector("#failures").textContent = data.failed_checks.toLocaleString();
       document.querySelector("#latency").textContent = data.avg_latency_ms == null ? "-" : `${Math.round(data.avg_latency_ms)} ms`;
 
+      if (!options.preserveSelection && (graphSelection.anchor || graphSelection.start || graphSelection.end)) {
+        clearGraphSelection();
+      }
       drawChart(data.series, data.date_start, data.date_end, chartState.hoveredIndex);
 
       const rows = data.recent.map(row => `
@@ -539,7 +724,7 @@
     }
 
     load();
-    setInterval(load, 5000);
+    setInterval(() => load({ preserveSelection: true }), 5000);
   </script>
 </body>
 </html>
