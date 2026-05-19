@@ -20,10 +20,28 @@ The project uses only the Python standard library:
 uv sync
 ```
 
+To expose `check-net` on your PATH so it can be run from any directory:
+
+```powershell
+uv tool install .
+```
+
+For editable local development:
+
+```powershell
+uv tool install --editable .
+```
+
 ## Run the checker
 
 ```powershell
 uv run check-net service
+```
+
+If you installed it as a tool, you can run the same commands directly from any path:
+
+```powershell
+check-net service
 ```
 
 By default it checks:
@@ -66,10 +84,27 @@ http://127.0.0.1:8765
 
 The dashboard refreshes every five seconds and has date-time range inputs for filtering uptime and request details.
 
-By default, all commands read and write `.\data\checknet.sqlite3`.
+By default, all commands read and write the same per-user database, so `check-net service`
+and `check-net dashboard` share records even when launched from different directories.
+On Windows, the default is:
+
+```text
+%LOCALAPPDATA%\check-net\checknet.sqlite3
+```
+
+To use a specific database, pass `--db` to both commands or set `CHECK_NET_DB`:
+
+```powershell
+$env:CHECK_NET_DB = "C:\path\to\checknet.sqlite3"
+check-net service
+check-net dashboard
+```
+
+If you already have records in the old project-local `.\data\checknet.sqlite3`, either keep
+using that file with `--db` / `CHECK_NET_DB`, or copy it to the default app data path.
 
 ## Query the database directly
 
 ```powershell
-sqlite3 .\data\checknet.sqlite3 "select checked_at, target, ok, status_code, latency_ms, error from requests order by checked_at desc limit 10;"
+sqlite3 "$env:LOCALAPPDATA\check-net\checknet.sqlite3" "select checked_at, target, ok, status_code, latency_ms, error from requests order by checked_at desc limit 10;"
 ```
