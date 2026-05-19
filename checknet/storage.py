@@ -1,12 +1,26 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
 
-DEFAULT_DB_PATH = Path("data/checknet.sqlite3")
+def default_db_path() -> Path:
+    env_path = os.environ.get("CHECK_NET_DB")
+    if env_path:
+        return Path(env_path).expanduser()
+
+    if os.name == "nt":
+        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    else:
+        base = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state"))
+
+    return base / "check-net" / "checknet.sqlite3"
+
+
+DEFAULT_DB_PATH = default_db_path()
 
 
 SCHEMA = """

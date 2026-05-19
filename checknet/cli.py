@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 from .dashboard import run_dashboard
 from .probe import ConnectivityMonitor, add_probe_args, parse_targets
@@ -36,8 +37,10 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "service":
+        db_path = Path(args.db).expanduser().resolve()
+        print(f"Using database: {db_path}", flush=True)
         monitor = ConnectivityMonitor(
-            db_path=args.db,
+            db_path=db_path,
             targets=parse_targets(args.targets),
             interval=args.interval,
             timeout=args.timeout,
