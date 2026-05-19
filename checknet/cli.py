@@ -35,9 +35,9 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
+    db_path = Path(args.db).expanduser().resolve()
 
     if args.command == "service":
-        db_path = Path(args.db).expanduser().resolve()
         print(f"Using database: {db_path}", flush=True)
         monitor = ConnectivityMonitor(
             db_path=db_path,
@@ -50,7 +50,7 @@ def main() -> None:
 
     if args.command == "once":
         monitor = ConnectivityMonitor(
-            db_path=args.db,
+            db_path=db_path,
             targets=parse_targets(args.targets),
             interval=args.interval,
             timeout=args.timeout,
@@ -63,12 +63,12 @@ def main() -> None:
         return
 
     if args.command == "dashboard":
-        run_dashboard(args.db, args.host, args.port)
+        run_dashboard(db_path, args.host, args.port)
         return
 
     if args.command == "init-db":
-        init_db(args.db)
-        print(f"Initialized {args.db}")
+        init_db(db_path)
+        print(f"Initialized {db_path}")
         return
 
     parser.error(f"Unknown command: {args.command}")
